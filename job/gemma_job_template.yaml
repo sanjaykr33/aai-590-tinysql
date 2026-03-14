@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gemma-vanilla-perf-job
+spec:
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse.sidecar.state.cloud.google.com/cpu-limit: "2"
+        gke-gcsfuse.sidecar.state.cloud.google.com/cpu-request: "2"
+        gke-gcsfuse.sidecar.state.cloud.google.com/memory-limit: "8Gi"
+        gke-gcsfuse.sidecar.state.cloud.google.com/memory-request: "8Gi"
+        gke-gcsfuse.sidecar.state.cloud.google.com/volumes: "true"
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: gemma-training-job-ksa
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      restartPolicy: Never
+      containers:
+      - name: training-container
+        image: {ml_image_path}
+        command: ["/bin/bash", "-c"]
+        args:
+        - >
+          {command_str}
+        env:
+        - name: PROJECT_DIR
+          value: "/app"
+        - name: PYTHONPATH
+          value: "/app/src"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
+        - name: GOOGLE_CLOUD_PROJECT
+          valueFrom:
+            configMapKeyRef:
+              name: gemma-perf-config
+              key: GCP_PROJECT_ID_CM
+        - name: GCP_PROJECT_ID_CM
+          valueFrom:
+            configMapKeyRef:
+              name: gemma-perf-config
+              key: GCP_PROJECT_ID_CM
+        - name: GCS_BUCKET_CM
+          valueFrom:
+            configMapKeyRef:
+              name: gemma-perf-config
+              key: GCS_BUCKET_CM
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: training-secrets
+              key: HF_TOKEN
+        resources:
+          limits:
+            cpu: "12"
+            memory: "44Gi"
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: "12"
+            memory: "44Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+        - name: gcs-fuse-csi
+          mountPath: "/gcs/${GCS_BUCKET}"
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+      - name: gcs-fuse-csi
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: "${GCS_BUCKET}"
+            mountOptions: "implicit-dirs"
