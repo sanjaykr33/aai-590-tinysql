@@ -1,0 +1,48 @@
+project:
+  id: "dummy"
+  region: us-central1
+gke:
+  cluster:
+    'name': 'sdk-training-cluster'
+    'num_nodes': 1
+    'machine_type': 'e2-standard-2'
+  node_pool:
+    'name': 'gpu-pool'
+    'machine_type': 'g2-standard-16'
+    'accelerator':
+      'type': 'nvidia-l4'
+      'count': 1
+    'num_nodes': 1
+    'scopes': 'cloud-platform'
+    'repository_name': 'sdk-training-repo'
+    'ml_image_name': 'gemma_training'
+data:
+  gcs_bucket: #replace this with actual bucket
+
+bigquery:
+  dataset: cfpb_analysis
+model:
+  base_id: google/gemma-3-4b-it
+training:
+  lora:
+    r: 32
+    alpha: 64
+    dropout: 0.05
+    target_modules:
+    - q_proj
+    - v_proj
+    - k_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  hyperparams:
+    batch_size: 4
+    learning_rate: 2e-4
+    epochs: 3
+    warmup_ratio: 0.1
+    max_steps: 20
+    gradient_accumulation_steps: 4
+    optim: paged_adamw_32bit
+    max_length: 64
+    logging_steps: 5
