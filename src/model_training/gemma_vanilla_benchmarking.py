@@ -1,21 +1,31 @@
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils import sql_utils
 import json
 import os
 import torch
 import re
-import sqlglot
-from sqlglot import exp
+try:
+    import sqlglot
+    from sqlglot import exp
+    SQLGLOT_AVAILABLE = True
+except ImportError:
+    SQLGLOT_AVAILABLE = False
 from google.cloud import bigquery
 from google.api_core.exceptions import Conflict
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # --- CONFIGURATION ---
-file_path = os.environ.get("FILE_PATH")
-output_log_path = os.environ.get("OUTPUT_LOG_PATH")
-PROJECT_ID = os.environ.get("PROJECT_ID")
-DATASET_ID = os.environ.get("DATASET_ID")
+file_path = os.environ.get(“FILE_PATH”)
+output_log_path = os.environ.get(“OUTPUT_LOG_PATH”)
+PROJECT_ID = os.environ.get(“PROJECT_ID”)
+DATASET_ID = os.environ.get(“DATASET_ID”)
 FULL_DATASET_PATH = f"{PROJECT_ID}.{DATASET_ID}"
-LOCATION = os.environ.get("LOCATION")
-MODEL_ID = os.environ.get("MODEL_ID")
+LOCATION = os.environ.get(“LOCATION”)
+MODEL_ID = "google/gemma-2-2b"
 
 # Initialize BigQuery Client
 client = bigquery.Client(project=PROJECT_ID, location=LOCATION)
@@ -53,7 +63,7 @@ def extract_sql_only(text):
         text = text.split(';')[0].strip() + ';'
 
     # Remove common hallucinated trailing text
-    text = re.split(r'(?i)note:|explanation:|---|\n\n', text)[0].strip()
+    text = re.split(r'(?i)answer:|note:|explanation:|---|\n\n', text)[0].strip()
 
     # Final cleanup of non-ASCII garbage
     text = re.sub(r'[^\x00-\x7F]+', '', text)
@@ -69,49 +79,30 @@ def validate_sql_dry_run(sql_query):
         client.query(sql_query, job_config=job_config)
         return True, "Success"
     except Exception as e:
-        return False, str(e)
+        error_msg = str(e)
+        # Strip BigQuery URL
+        error_msg = re.sub(r"400 POST https://bigquery\.googleapis\.com/bigquery/v2/projects/[^/]+/jobs\?prettyPrint=false:?", "", error_msg, flags=re.IGNORECASE).strip()
+        # De-identify Project ID
+        error_msg = re.sub(r"gpu-launchpad-playground", "[PROJECT_ID]", error_msg, flags=re.IGNORECASE)
+        # Strip Job ID
+        error_msg = re.sub(r"Job ID:\s*[a-f0-9\-]+", "", error_msg, flags=re.IGNORECASE)
+        # Strip Location
+        error_msg = re.sub(r"Location:\s*[a-z0-9\-]+", "", error_msg, flags=re.IGNORECASE)
+        # Clean double spaces and leading characters
+        error_msg = re.sub(r"\s+", " ", error_msg).strip()
+        error_msg = re.sub(r"^:\s*", "", error_msg)
+        return False, error_msg
 
 def extract_and_fix_ddl(context_raw):
     """Transpiles MySQL DDL to BigQuery and strips constraints."""
-    try:
-        statements = sqlglot.parse(context_raw, read="mysql")
-    except:
-        return ""
-
-    ddl_statements = []
-    for expression in statements:
-        if isinstance(expression, exp.Create) and expression.args.get("kind") == "TABLE":
-            expression.set("exists", True)
-
-            if isinstance(expression.this, exp.Schema):
-                table_ident = expression.this.this
-            else:
-                table_ident = expression.this
-            if isinstance(table_ident, exp.Table):
-                table_ident.set("db", None)
-                table_ident.set("catalog", None)
-
-            schema = expression.this
-            if isinstance(schema, exp.Schema):
-                for column_def in schema.expressions:
-                    if isinstance(column_def, exp.ColumnDef):
-                        column_def.set("constraints", [
-                            c for c in column_def.args.get("constraints", [])
-                            if not (isinstance(c.kind, (exp.PrimaryKeyColumnConstraint, exp.Reference)) or "FOREIGN" in str(c.kind).upper())
-                        ])
-                schema.set("expressions", [
-                    e for e in schema.expressions
-                    if not (isinstance(e, exp.Constraint) and any(isinstance(k, (exp.PrimaryKey, exp.ForeignKey, exp.Reference)) for k in e.args.values()))
-                ])
-            ddl_statements.append(expression.sql(dialect="bigquery"))
-    return ";\n".join(ddl_statements)
+    return sql_utils.extract_and_fix_ddl(context_raw)
 
 def generate_sql(prompt, schema):
     """Generates SQL with hard-coded dataset anchoring and a code trigger."""
     input_text = f"""<start_of_turn>user
 You are a GoogleSQL expert. Generate a BigQuery query to answer the question using the schema below.
 Rules:
-1. Use ONLY the table and columns provided in the schema.
+1. Use ONLY columns provided in the schema. If a column is not explicitly defined in the CREATE TABLE statement, you MUST NOT use it. Do not assume standard names exist.
 2. Prefix all table names with `{DATASET_ID}.`.
 3. Return ONLY the SQL query.
 
@@ -169,13 +160,24 @@ def process_records(path, count=500):
             # 2. Generate and Validate SQL
             if table_exists:
                 gen_sql = generate_sql(sql_prompt, final_ddl)
-                is_valid, bq_msg = validate_sql_dry_run(gen_sql)
+
+                # Attempt to transpile from MySQL to BigQuery (fallback for MySQL-generated syntax)
+                try:
+                    gen_sql = sql_utils.transpile_to_bigquery(gen_sql)
+                except Exception:
+                    # Fallback to original if transpilation fails
+                    pass
+
+                # Swap literal placeholder for actual BigQuery dataset before validation
+                run_sql = gen_sql.replace("{DATASET_ID}", DATASET_ID)
+                is_valid, bq_msg = validate_sql_dry_run(run_sql)
 
                 res = {
                     "prompt": sql_prompt,
                     "original_sql": gold_sql,
                     "generated_sql": gen_sql,
-                    "valid": is_valid
+                    "valid": is_valid,
+                    #"error": bq_msg if not is_valid else None
                 }
                 results_to_save.append(res)
 
