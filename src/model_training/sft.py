@@ -8,7 +8,7 @@ from utils import sql_utils
 if "KUBERNETES_SERVICE_HOST" in os.environ:
     del os.environ["KUBERNETES_SERVICE_HOST"]
 os.environ["GKE_DIAGON_IDENTIFIER"] = os.environ.get("HOSTNAME", "sft-pod-1")
-os.environ["GKE_DIAGON_METADATA"] = ‘os.environ.get(“PROJECT_METADATA”)’
+os.environ["GKE_DIAGON_METADATA"] = '{"project_id":"gpu-launchpad-playground","location":"us-central1","cluster_name":"sft-cluster"}'
 
 
 import torch
@@ -26,9 +26,26 @@ from transformers import TrainerCallback
 
 # --- CONFIGURATION ---
 MODEL_ID = "google/gemma-2-2b"
-DATASET_ID = os.environ.get(“DATASET_ID”)
+DATASET_ID = "cfpb_analysis" # Kept consistent with your inference script
 OUTPUT_DIR = "./gemma-2-2b-sql-finetuned"
 HUGGINGFACE_TOKEN = os.environ.get("HF_TOKEN") # Ensure your token is set for Gemma access
+
+
+# --- 1. INITIALIZE THE ML DIAGNOSTICS RUN ---
+"""
+print("Initializing Google Cloud ML Diagnostics...")
+run = machinelearning_run(
+    name="gemma-2-sql-sft-run1",
+    project="gpu-launchpad-playground",
+    region="us-central1",                        # ⚠️ Parameter is 'region', not 'location'
+    configs={
+        "model_id": MODEL_ID,
+        "max_length": 1024,
+        "batch_size": 2,
+        "learning_rate": 2e-4
+    }
+)
+"""
 
 
 # --- 2. CREATE A HUGGING FACE CALLBACK ---
@@ -78,7 +95,7 @@ SQL:{target_sql}<end_of_turn>"""
 
 # Apply formatting and shuffle
 # For this example, we take a subset to test the pipeline quickly. Remove the select() for a full run.
-PROCESSED_DATA_CACHE_DIR = os.environ.get(“CACHE_DIR”)
+PROCESSED_DATA_CACHE_DIR = "/gcs/cfpb-raw-lake-sdk/data/processed_dataset_cache_splits"
 
 if os.path.exists(PROCESSED_DATA_CACHE_DIR):
     print(f"Loading preprocessed dataset splits from cache: {PROCESSED_DATA_CACHE_DIR}")
@@ -155,6 +172,7 @@ training_args = SFTConfig(
     warmup_ratio=0.03,
     lr_scheduler_type="cosine",
 
+    #  These MUST live in SFTConfig now, not SFTTrainer
     max_length=1024,
     dataset_text_field="text",
 )
@@ -167,6 +185,7 @@ trainer = SFTTrainer(
     eval_dataset=val_dataset,
     args=training_args,
     processing_class=tokenizer
+    #callbacks=[GCPDiagnosticsCallback()] # 👈 Inject your GCP callback here
 )
 
 # --- 4. EXECUTE TRAINING ---
