@@ -1,0 +1,32 @@
+# Use a clean, modern NVIDIA PyTorch base
+FROM nvcr.io/nvidia/pytorch:24.08-py3
+
+# Set metadata
+LABEL maintainer="TinySql"
+LABEL description="Gemma-2-2B Vanilla SQL Validation Image"
+
+# 1. Environment Variables
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV PYTHONUNBUFFERED=1
+# Ensure Google Cloud knows which project to use
+ENV GOOGLE_CLOUD_PROJECT="tinysql-project"
+
+WORKDIR /app
+
+# 2. Install Python Dependencies
+# We install transformers >= 4.42.3 to ensure Gemma 2 support
+RUN pip install --no-cache-dir \
+    transformers>=4.42.3 \
+    accelerate>=0.31.0 \
+    hf_transfer \
+    google-cloud-bigquery \
+    google-cloud-storage \
+    sqlglot \
+    tqdm \
+    db-dtypes \
+    pandas
+
+# 3. Copy the validation script
+# COPY inference_validate.py .
+
+CMD ["/bin/bash"]
