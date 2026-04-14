@@ -1,6 +1,13 @@
+# ==========================================
+# TinySQL - Global Config
+# ==========================================
+
 project:
-  id: "dummy"
-  region: us-central1
+  id: "cfpb-usd-aai-540"
+  region: "us-central1"
+  zone: "us-central1-b"
+  env: "development" # [development, staging, production]
+
 gke:
   cluster:
     'name': 'sdk-training-cluster'
@@ -17,12 +24,12 @@ gke:
     'repository_name': 'sdk-training-repo'
     'ml_image_name': 'gemma_training'
 data:
-  gcs_bucket: #replace this with actual bucket
+  gcs_bucket: cfpb-raw-lake-sdk
 
 bigquery:
   dataset: cfpb_analysis
 model:
-  base_id: google/gemma-3-4b-it
+  base_id: google/gemma-2-2b-it
 training:
   lora:
     r: 32

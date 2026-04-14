@@ -83,7 +83,6 @@ def generate_sql(question, table_schema, model, tokenizer):
     prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     # Print just the generated SQL (stripping out the original prompt)
-    # Use len(sql_prompt) instead of len(prompt)
     bq_sql = prediction[len(sql_prompt) :].strip()
     #print(sql_query)
     return bq_sql
@@ -161,8 +160,36 @@ def process_records(file_path):
             print(f"Dry-run Message: {message}")
             print("-" * 50)
 
+def individual_record_test(custom_sql=False):
+    if not custom_sql:
+        sql_prompt = """Find the average travel time (in days) for vessels traveling
+                         between the Port of Valparaiso and the Port of Singapore in
+                         the first half of 2021, ranked by the average travel time in
+                         ascending order."""
+
+        sql_context = """
+        CREATE TABLE Routes (route_id INT, departure_port VARCHAR(20), arrival_port VARCHAR(20));
+        CREATE TABLE VesselTravel (vessel_id INT, route INT, departure_date DATE, travel_time INT);
+        INSERT INTO Routes (route_id, departure_port, arrival_port) VALUES
+        (1, 'Los Angeles', 'Tokyo'), (2, 'Rotterdam', 'New York'), (3, 'Santos', 'Hong Kong'),
+        (4, 'Mumbai', 'Shanghai'), (5, 'Buenos Aires', 'Jakarta'), (6, 'Dakar', 'Lagos'),
+        (7, 'Valparaiso', 'Singapore');
+        INSERT INTO VesselTravel (vessel_id, route, departure_date, travel_time) VALUES
+        (1, 7, '2021-01-01', 45), (2, 7, '2021-02-01', 46), (3, 7, '2021-03-01', 47),
+        (4, 7, '2021-04-01', 44), (5, 7, '2021-05-01', 45), (6, 7, '2021-06-01', 46);
+        """
+        final_ddl = extract_and_fix_ddl(sql_context)
+        final_ddl = final_ddl.lower()
+
+        table_exists = create_table_if_not_exists(final_ddl, 1)
+        if not table_exists:
+            pass
+            bq_sql, is_valid, message = get_sql_results(sql_prompt, sql_context, model, tokenizer)
+            print (bq_sql, is_valid)
+
 
 
 if __name__ == "__main__":
     model, tokenizer = initialize_model()
     process_records(file_path)
+    #individual_record_test(custom_sql=True)

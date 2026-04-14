@@ -19,12 +19,15 @@ from google.api_core.exceptions import Conflict
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # --- CONFIGURATION ---
-file_path = os.environ.get(“FILE_PATH”)
-output_log_path = os.environ.get(“OUTPUT_LOG_PATH”)
-PROJECT_ID = os.environ.get(“PROJECT_ID”)
-DATASET_ID = os.environ.get(“DATASET_ID”)
+PROJECT_ID = os.environ.get("PROJECT_ID")
+DATASET_ID = os.environ.get("DATASET_ID")
+GCS_BUCKET = os.environ.get("GCS_BUCKET")
+
+file_path = f'/gcs/{GCS_BUCKET}/data/tinycode_test_ds.jsonl'
+output_log_path = f'/gcs/{GCS_BUCKET}/data/gemma_benchmark_results.jsonl'
+
 FULL_DATASET_PATH = f"{PROJECT_ID}.{DATASET_ID}"
-LOCATION = os.environ.get(“LOCATION”)
+LOCATION = "us-central1"
 MODEL_ID = "google/gemma-2-2b"
 
 # Initialize BigQuery Client
@@ -83,7 +86,7 @@ def validate_sql_dry_run(sql_query):
         # Strip BigQuery URL
         error_msg = re.sub(r"400 POST https://bigquery\.googleapis\.com/bigquery/v2/projects/[^/]+/jobs\?prettyPrint=false:?", "", error_msg, flags=re.IGNORECASE).strip()
         # De-identify Project ID
-        error_msg = re.sub(r"gpu-launchpad-playground", "[PROJECT_ID]", error_msg, flags=re.IGNORECASE)
+        error_msg = re.sub(f"{PROJECT_ID}", "[PROJECT_ID]", error_msg, flags=re.IGNORECASE)
         # Strip Job ID
         error_msg = re.sub(r"Job ID:\s*[a-f0-9\-]+", "", error_msg, flags=re.IGNORECASE)
         # Strip Location
@@ -100,19 +103,20 @@ def extract_and_fix_ddl(context_raw):
 def generate_sql(prompt, schema):
     """Generates SQL with hard-coded dataset anchoring and a code trigger."""
     input_text = f"""<start_of_turn>user
-You are a GoogleSQL expert. Generate a BigQuery query to answer the question using the schema below.
-Rules:
-1. Use ONLY columns provided in the schema. If a column is not explicitly defined in the CREATE TABLE statement, you MUST NOT use it. Do not assume standard names exist.
-2. Prefix all table names with `{DATASET_ID}.`.
-3. Return ONLY the SQL query.
+    You are a GoogleSQL expert. Generate a BigQuery query to answer the question using the schema below.
+    Rules:
+    1. Use ONLY columns provided in the schema. If a column is not explicitly defined in the CREATE TABLE statement, you MUST NOT use it. Do not assume standard names exist.
+    2. Prefix all table names with `{DATASET_ID}.`.
+    3. Return ONLY the SQL query.
 
-Schema:
-{schema}
+    Schema:
+    {schema}
 
-Question:
-{prompt}<end_of_turn>
-<start_of_turn>model
-SQL:""" # Triggering the start of the code block
+    Question:
+    {prompt}
+    <end_of_turn>
+    <start_of_turn>model
+    SQL:""" # Triggering the start of the code block
 
     inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
 
